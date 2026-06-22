@@ -121,21 +121,21 @@ class WeddingScriptApp:
         self.export_btn.pack(side=LEFT, padx=(5, 0), fill=X, expand=True)
     
     def setup_right_panel(self, parent):
-        notebook = ttk.Notebook(parent)
-        notebook.pack(fill=BOTH, expand=True)
+        self.notebook = ttk.Notebook(parent)
+        self.notebook.pack(fill=BOTH, expand=True)
         
-        detail_frame = ttk.Frame(notebook)
-        notebook.add(detail_frame, text="详情")
+        self.detail_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.detail_frame, text="详情")
         
-        change_frame = ttk.Frame(notebook)
-        notebook.add(change_frame, text="变更记录")
+        self.change_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.change_frame, text="变更记录")
         
-        stats_frame = ttk.Frame(notebook)
-        notebook.add(stats_frame, text="统计分析")
+        self.stats_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.stats_frame, text="统计分析")
         
-        self.setup_detail_panel(detail_frame)
-        self.setup_change_panel(change_frame)
-        self.setup_stats_panel(stats_frame)
+        self.setup_detail_panel(self.detail_frame)
+        self.setup_change_panel(self.change_frame)
+        self.setup_stats_panel(self.stats_frame)
     
     def setup_detail_panel(self, parent):
         detail_frame = ttk.LabelFrame(parent, text="主持词详情")
@@ -204,9 +204,13 @@ class WeddingScriptApp:
         self.change_tree.bind('<<TreeviewSelect>>', self.on_change_select)
     
     def setup_stats_panel(self, parent):
-        overview_frame = ttk.LabelFrame(parent, text="概览统计")
-        overview_frame.pack(fill=X, padx=10, pady=10)
+        for widget in parent.winfo_children():
+            widget.destroy()
         
+        self.overview_frame = ttk.LabelFrame(parent, text="概览统计")
+        self.overview_frame.pack(fill=X, padx=10, pady=10)
+        
+        self.stat_labels = {}
         stats = db_operations.get_stats_overview()
         stat_items = [
             ('主持总数', stats['total']),
@@ -216,13 +220,26 @@ class WeddingScriptApp:
         ]
         
         for i, (label, value) in enumerate(stat_items):
-            frame = ttk.Frame(overview_frame)
+            frame = ttk.Frame(self.overview_frame)
             frame.pack(side=LEFT, padx=20, pady=10)
             ttk.Label(frame, text=label, font=('Microsoft YaHei', 10)).pack()
-            ttk.Label(frame, text=str(value), font=('Microsoft YaHei', 20, 'bold')).pack()
+            val_label = ttk.Label(frame, text=str(value), font=('Microsoft YaHei', 20, 'bold'))
+            val_label.pack()
+            self.stat_labels[label] = val_label
         
-        chart_frame = ttk.LabelFrame(parent, text="统计图表")
-        chart_frame.pack(fill=BOTH, expand=True, padx=10, pady=10)
+        self.chart_frame = ttk.LabelFrame(parent, text="统计图表")
+        self.chart_frame.pack(fill=BOTH, expand=True, padx=10, pady=10)
+        
+        self.update_charts()
+        
+        self.high_freq_frame = ttk.LabelFrame(parent, text="高频问题（出现≥3次）")
+        self.high_freq_frame.pack(fill=X, padx=10, pady=10)
+        
+        self.update_high_freq_issues()
+    
+    def update_charts(self):
+        for widget in self.chart_frame.winfo_children():
+            widget.destroy()
         
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10, 4))
         
@@ -245,19 +262,20 @@ class WeddingScriptApp:
             ax2.set_ylabel('原因')
         
         plt.tight_layout()
-        canvas = FigureCanvasTkAgg(fig, master=chart_frame)
+        canvas = FigureCanvasTkAgg(fig, master=self.chart_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill=BOTH, expand=True)
-        
-        high_freq_frame = ttk.LabelFrame(parent, text="高频问题（出现≥3次）")
-        high_freq_frame.pack(fill=X, padx=10, pady=10)
+    
+    def update_high_freq_issues(self):
+        for widget in self.high_freq_frame.winfo_children():
+            widget.destroy()
         
         high_freq_issues = db_operations.get_high_freq_issues()
         high_freq_issues = [i for i in high_freq_issues if i[1] >= 3]
         
         if high_freq_issues:
             columns = ('issue', 'count', 'first', 'last')
-            tree = ttk.Treeview(high_freq_frame, columns=columns, show='headings', height=5)
+            tree = ttk.Treeview(self.high_freq_frame, columns=columns, show='headings', height=5)
             tree.heading('issue', text='问题描述')
             tree.heading('count', text='出现次数')
             tree.heading('first', text='首次出现')
@@ -273,7 +291,23 @@ class WeddingScriptApp:
             
             tree.pack(fill=X)
         else:
-            ttk.Label(high_freq_frame, text="暂无高频问题").pack(pady=10)
+            ttk.Label(self.high_freq_frame, text="暂无高频问题").pack(pady=10)
+    
+    def refresh_stats(self):
+        stats = db_operations.get_stats_overview()
+        stat_items = [
+            ('主持总数', stats['total']),
+            ('已定稿', stats['finalized']),
+            ('平均反馈轮次', stats['avg_round']),
+            ('变更记录总数', stats['total_changes'])
+        ]
+        
+        for label, value in stat_items:
+            if label in self.stat_labels:
+                self.stat_labels[label].config(text=str(value))
+        
+        self.update_charts()
+        self.update_high_freq_issues()
     
     def load_script_list(self):
         for item in self.tree.get_children():
@@ -298,13 +332,12 @@ class WeddingScriptApp:
             self.load_script_detail(script_id)
             self.load_change_records(script_id)
             
-            self.edit_btn.config(state=NORMAL)
-            self.delete_btn.config(state=NORMAL)
-            self.add_change_btn.config(state=NORMAL)
-            
             script = db_operations.get_host_script_by_id(script_id)
-            if script and script[8] == '已定稿':
-                self.add_change_btn.config(state=DISABLED)
+            is_finalized = script and script[8] == '已定稿'
+            
+            self.edit_btn.config(state=DISABLED if is_finalized else NORMAL)
+            self.delete_btn.config(state=NORMAL)
+            self.add_change_btn.config(state=DISABLED if is_finalized else NORMAL)
         else:
             self.current_script_id = None
             self.edit_btn.config(state=DISABLED)
@@ -385,6 +418,7 @@ class WeddingScriptApp:
                 if success:
                     messagebox.showinfo("成功", "删除成功")
                     self.load_script_list()
+                    self.refresh_stats()
                     self.current_script_id = None
                     self.edit_btn.config(state=DISABLED)
                     self.delete_btn.config(state=DISABLED)
@@ -414,6 +448,8 @@ class WeddingScriptApp:
                 if success:
                     messagebox.showinfo("成功", "删除成功")
                     self.load_change_records(self.current_script_id)
+                    self.load_script_list()
+                    self.refresh_stats()
                 else:
                     messagebox.showerror("错误", f"删除失败: {error}")
     
@@ -605,6 +641,7 @@ class ScriptDialog:
             messagebox.showinfo("成功", "保存成功")
             self.app.load_script_list()
             self.app.load_host_names()
+            self.app.refresh_stats()
             self.top.destroy()
         else:
             messagebox.showerror("错误", f"保存失败: {error}")
@@ -673,6 +710,7 @@ class ChangeRecordDialog:
             messagebox.showinfo("成功", "保存成功")
             self.app.load_script_list()
             self.app.load_change_records(self.script_id)
+            self.app.refresh_stats()
             self.top.destroy()
         else:
             messagebox.showerror("错误", f"保存失败: {error}")
