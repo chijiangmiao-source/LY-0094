@@ -320,6 +320,33 @@ class WeddingScriptApp:
         self.high_freq_frame.pack(fill=X, padx=10, pady=10)
         
         self.update_high_freq_issues()
+        
+        self.paragraph_frame = ttk.LabelFrame(parent, text="修改段落统计")
+        self.paragraph_frame.pack(fill=X, padx=10, pady=10)
+        
+        self.update_paragraph_stats()
+    
+    def update_paragraph_stats(self):
+        for widget in self.paragraph_frame.winfo_children():
+            widget.destroy()
+        
+        paragraph_stats = db_operations.get_modify_paragraph_stats()
+        
+        if paragraph_stats:
+            columns = ('paragraph', 'count')
+            tree = ttk.Treeview(self.paragraph_frame, columns=columns, show='headings', height=6)
+            tree.heading('paragraph', text='修改段落')
+            tree.heading('count', text='修改次数')
+            
+            tree.column('paragraph', width=300)
+            tree.column('count', width=100)
+            
+            for p in paragraph_stats:
+                tree.insert('', END, values=(p[0], p[1]))
+            
+            tree.pack(fill=X)
+        else:
+            ttk.Label(self.paragraph_frame, text="暂无修改段落数据").pack(pady=10)
     
     def update_charts(self):
         for widget in self.chart_frame.winfo_children():
@@ -392,6 +419,7 @@ class WeddingScriptApp:
         
         self.update_charts()
         self.update_high_freq_issues()
+        self.update_paragraph_stats()
     
     def load_script_list(self):
         for item in self.tree.get_children():

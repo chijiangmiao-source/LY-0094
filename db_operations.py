@@ -38,13 +38,20 @@ def get_host_script_by_id(script_id):
 def update_host_script(script_id, bride_name, groom_name, wedding_date, host_name, current_version, feedback_round, finalized_status, script_content='', remarks=''):
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
+        existing_version = execute_query('SELECT status FROM version_history WHERE script_id = ? AND version_number = ?', 
+                                        (script_id, current_version), fetch_one=True)
+        if existing_version and existing_version[0] == '已定稿':
+            return False, '已定稿版本不可篡改，请创建新版本分支'
+        
         execute_non_query('''
             UPDATE host_script SET bride_name=?, groom_name=?, wedding_date=?, host_name=?, 
                                   current_version=?, feedback_round=?, finalized_status=?, 
                                   script_content=?, remarks=?, updated_at=?
             WHERE id = ?
         ''', (bride_name, groom_name, wedding_date, host_name, current_version, feedback_round, finalized_status, script_content, remarks, now, script_id))
-        save_version_history(script_id, current_version, '更新', script_content, finalized_status)
+        
+        label = '定稿' if finalized_status == '已定稿' else '更新'
+        save_version_history(script_id, current_version, label, script_content, finalized_status)
         return True, None
     except Exception as e:
         return False, str(e)
@@ -186,15 +193,23 @@ def get_change_reason_stats():
         FROM change_record GROUP BY modify_reason ORDER BY cnt DESC LIMIT 10
     ''')
 
+def get_modify_paragraph_stats():
+    return execute_query('''
+        SELECT modify_paragraph, COUNT(*) as cnt 
+        FROM change_record GROUP BY modify_paragraph ORDER BY cnt DESC
+    ''')
+
 def get_host_names():
     return execute_query('SELECT DISTINCT host_name FROM host_script ORDER BY host_name')
 
 def save_version_history(script_id, version_number, version_label, script_content, status='草稿'):
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
-        existing = execute_query('SELECT id FROM version_history WHERE script_id = ? AND version_number = ?', 
+        existing = execute_query('SELECT id, status FROM version_history WHERE script_id = ? AND version_number = ?', 
                                 (script_id, version_number), fetch_one=True)
         if existing:
+            if existing[1] == '已定稿':
+                return False, '已定稿版本不可篡改'
             execute_non_query('''
                 UPDATE version_history SET version_label=?, script_content=?, status=?, created_at=?
                 WHERE script_id = ? AND version_number = ?
@@ -242,9 +257,9 @@ def create_version_branch(script_id, source_version, new_version_number, new_ver
         script = get_host_script_by_id(script_id)
         if script:
             execute_non_query('''
-                UPDATE host_script SET current_version=?, finalized_status='未定稿', updated_at=?
+                UPDATE host_script SET current_version=?, script_content=?, finalized_status='未定稿', updated_at=?
                 WHERE id = ?
-            ''', (new_version_number, now, script_id))
+            ''', (new_version_number, source[4], now, script_id))
         
         return True, None
     except Exception as e:
