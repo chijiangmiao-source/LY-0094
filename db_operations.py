@@ -397,7 +397,7 @@ def record_customer_view(script_id, version_number):
     except Exception as e:
         return False, str(e)
 
-def customer_confirm(script_id, version_number, confirm_result, feedback, confirmed_by):
+def customer_confirm(script_id, version_number, confirm_result, feedback, confirmed_by, modify_paragraph='全文'):
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
         flow = get_approval_flow_by_script_and_version(script_id, version_number)
@@ -436,9 +436,9 @@ def customer_confirm(script_id, version_number, confirm_result, feedback, confir
                 customer_confirmed_at=now
             )
             if success:
-                add_approval_history(flow_id, script_id, version_number, '客户退回', '客户', confirmed_by, feedback)
+                add_approval_history(flow_id, script_id, version_number, '客户退回', '客户', confirmed_by, f"{modify_paragraph}: {feedback}" if feedback else modify_paragraph)
                 
-                create_feedback_task(flow_id, script_id, version_number, '全文', feedback)
+                create_feedback_task(flow_id, script_id, version_number, modify_paragraph, feedback)
         
         else:
             return False, '无效的确认结果'
@@ -499,13 +499,21 @@ def get_feedback_tasks_by_script_id(script_id):
         FROM approval_task WHERE script_id = ? ORDER BY created_at DESC
     ''', (script_id,))
 
-def update_feedback_task_status(task_id, status, completed_at=None):
+def update_feedback_task_status(task_id, status, completed_at=None, operator_name='系统'):
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     completed_at = completed_at or now
     try:
         execute_non_query('''
             UPDATE approval_task SET status=?, completed_at=? WHERE id=?
         ''', (status, completed_at, task_id))
+        
+        task = execute_query('''
+            SELECT flow_id, script_id, version_number, modify_paragraph FROM approval_task WHERE id=?
+        ''', (task_id,), fetch_one=True)
+        
+        if task and status == '已完成':
+            add_approval_history(task[0], task[1], task[2], '反馈任务完成', '策划师', operator_name, f"完成段落: {task[3]}")
+        
         return True, None
     except Exception as e:
         return False, str(e)
@@ -553,12 +561,13 @@ def export_approval_history(script_id=None, filename=None):
     from openpyxl.styles import Font, PatternFill, Alignment
     
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "审批历史"
     
-    headers = ['审批ID', '脚本ID', '记录编号', '版本号', '操作', '操作角色', '操作人', '备注', '操作时间']
-    for i, header in enumerate(headers):
-        cell = ws.cell(row=1, column=i + 1, value=header)
+    ws1 = wb.active
+    ws1.title = "审批历史"
+    
+    headers1 = ['审批ID', '脚本ID', '记录编号', '版本号', '操作', '操作角色', '操作人', '备注', '操作时间']
+    for i, header in enumerate(headers1):
+        cell = ws1.cell(row=1, column=i + 1, value=header)
         cell.font = Font(bold=True)
         cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
         cell.font.color = openpyxl.styles.colors.WHITE
@@ -577,19 +586,110 @@ def export_approval_history(script_id=None, filename=None):
     
     row_idx = 2
     for h in histories:
-        ws.cell(row=row_idx, column=1, value=h[0])
-        ws.cell(row=row_idx, column=2, value=h[1])
-        ws.cell(row=row_idx, column=3, value=h[2] if len(h) > 2 else '')
-        ws.cell(row=row_idx, column=4, value=h[3] if len(h) > 3 else '')
-        ws.cell(row=row_idx, column=5, value=h[4] if len(h) > 4 else '')
-        ws.cell(row=row_idx, column=6, value=h[5] if len(h) > 5 else '')
-        ws.cell(row=row_idx, column=7, value=h[6] if len(h) > 6 else '')
-        ws.cell(row=row_idx, column=8, value=h[7] if len(h) > 7 else '')
-        ws.cell(row=row_idx, column=9, value=h[8] if len(h) > 8 else '')
+        ws1.cell(row=row_idx, column=1, value=h[0])
+        ws1.cell(row=row_idx, column=2, value=h[1])
+        ws1.cell(row=row_idx, column=3, value=h[2] if len(h) > 2 else '')
+        ws1.cell(row=row_idx, column=4, value=h[3] if len(h) > 3 else '')
+        ws1.cell(row=row_idx, column=5, value=h[4] if len(h) > 4 else '')
+        ws1.cell(row=row_idx, column=6, value=h[5] if len(h) > 5 else '')
+        ws1.cell(row=row_idx, column=7, value=h[6] if len(h) > 6 else '')
+        ws1.cell(row=row_idx, column=8, value=h[7] if len(h) > 7 else '')
+        ws1.cell(row=row_idx, column=9, value=h[8] if len(h) > 8 else '')
         row_idx += 1
     
     for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']:
-        ws.column_dimensions[col].width = 20
+        ws1.column_dimensions[col].width = 20
+    
+    ws2 = wb.create_sheet(title="反馈任务")
+    headers2 = ['任务ID', '审批流程ID', '脚本ID', '记录编号', '版本号', '修改段落', '反馈内容', '状态', '指派给', '创建时间', '完成时间']
+    for i, header in enumerate(headers2):
+        cell = ws2.cell(row=1, column=i + 1, value=header)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color='5B9BD5', end_color='5B9BD5', fill_type='solid')
+        cell.font.color = openpyxl.styles.colors.WHITE
+        cell.alignment = Alignment(horizontal='center')
+    
+    if script_id:
+        tasks = get_feedback_tasks_by_script_id(script_id)
+        record_no = execute_query('SELECT record_no FROM host_script WHERE id=?', (script_id,), fetch_one=True)
+        record_no = record_no[0] if record_no else ''
+    else:
+        tasks = execute_query('''
+            SELECT at.id, at.flow_id, at.script_id, hs.record_no, at.version_number, 
+                   at.modify_paragraph, at.feedback_content, at.status, at.assigned_to, 
+                   at.created_at, at.completed_at
+            FROM approval_task at
+            LEFT JOIN host_script hs ON at.script_id = hs.id
+            ORDER BY at.created_at DESC
+        ''')
+        record_no = None
+    
+    row_idx = 2
+    for t in tasks:
+        ws2.cell(row=row_idx, column=1, value=t[0])
+        ws2.cell(row=row_idx, column=2, value=t[1])
+        ws2.cell(row=row_idx, column=3, value=t[2])
+        if record_no:
+            ws2.cell(row=row_idx, column=4, value=record_no)
+            ws2.cell(row=row_idx, column=5, value=t[3])
+            ws2.cell(row=row_idx, column=6, value=t[4])
+            ws2.cell(row=row_idx, column=7, value=t[5])
+            ws2.cell(row=row_idx, column=8, value=t[6])
+            ws2.cell(row=row_idx, column=9, value=t[7])
+            ws2.cell(row=row_idx, column=10, value=t[8])
+            ws2.cell(row=row_idx, column=11, value=t[9])
+        else:
+            ws2.cell(row=row_idx, column=4, value=t[3] if len(t) > 3 else '')
+            ws2.cell(row=row_idx, column=5, value=t[4] if len(t) > 4 else '')
+            ws2.cell(row=row_idx, column=6, value=t[5] if len(t) > 5 else '')
+            ws2.cell(row=row_idx, column=7, value=t[6] if len(t) > 6 else '')
+            ws2.cell(row=row_idx, column=8, value=t[7] if len(t) > 7 else '')
+            ws2.cell(row=row_idx, column=9, value=t[8] if len(t) > 8 else '')
+            ws2.cell(row=row_idx, column=10, value=t[9] if len(t) > 9 else '')
+            ws2.cell(row=row_idx, column=11, value=t[10] if len(t) > 10 else '')
+        row_idx += 1
+    
+    for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']:
+        ws2.column_dimensions[col].width = 20
+    
+    ws3 = wb.create_sheet(title="审批流程概览")
+    headers3 = ['流程ID', '脚本ID', '记录编号', '版本号', '当前状态', '当前审批人', '客户查看时间', '确认结果', '确认人', '确认时间', '提交时间']
+    for i, header in enumerate(headers3):
+        cell = ws3.cell(row=1, column=i + 1, value=header)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color='ED7D31', end_color='ED7D31', fill_type='solid')
+        cell.font.color = openpyxl.styles.colors.WHITE
+        cell.alignment = Alignment(horizontal='center')
+    
+    if script_id:
+        flows = get_approval_flow_by_script_id(script_id)
+    else:
+        flows = execute_query('''
+            SELECT af.id, af.script_id, hs.record_no, af.version_number, af.status, af.current_approver,
+                   af.customer_view_time, af.customer_confirm_result, af.customer_confirmed_by,
+                   af.customer_confirmed_at, af.created_at
+            FROM approval_flow af
+            LEFT JOIN host_script hs ON af.script_id = hs.id
+            ORDER BY af.created_at DESC
+        ''')
+    
+    row_idx = 2
+    for f in flows:
+        ws3.cell(row=row_idx, column=1, value=f[0])
+        ws3.cell(row=row_idx, column=2, value=f[1])
+        ws3.cell(row=row_idx, column=3, value=f[2] if len(f) > 2 else '')
+        ws3.cell(row=row_idx, column=4, value=f[3] if len(f) > 3 else '')
+        ws3.cell(row=row_idx, column=5, value=f[4] if len(f) > 4 else '')
+        ws3.cell(row=row_idx, column=6, value=f[5] if len(f) > 5 else '')
+        ws3.cell(row=row_idx, column=7, value=f[6] if len(f) > 6 else '')
+        ws3.cell(row=row_idx, column=8, value=f[7] if len(f) > 7 else '')
+        ws3.cell(row=row_idx, column=9, value=f[8] if len(f) > 8 else '')
+        ws3.cell(row=row_idx, column=10, value=f[9] if len(f) > 9 else '')
+        ws3.cell(row=row_idx, column=11, value=f[10] if len(f) > 10 else '')
+        row_idx += 1
+    
+    for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K']:
+        ws3.column_dimensions[col].width = 18
     
     if not filename:
         filename = f'审批历史_{datetime.datetime.now().strftime("%Y%m%d")}.xlsx'

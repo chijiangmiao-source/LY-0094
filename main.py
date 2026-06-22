@@ -399,14 +399,10 @@ class WeddingScriptApp:
         if selection:
             item = self.feedback_task_tree.item(selection[0])
             task_id = item['values'][0]
+            paragraph = item['values'][1]
             
-            if messagebox.askyesno("确认完成", "确定要标记此任务为已完成吗？"):
-                success, error = db_operations.update_feedback_task_status(task_id, '已完成')
-                if success:
-                    messagebox.showinfo("成功", "任务已标记为完成")
-                    self.load_feedback_tasks(self.current_script_id)
-                else:
-                    messagebox.showerror("错误", f"操作失败: {error}")
+            complete_dialog = CompleteTaskDialog(self.root, task_id, paragraph, self)
+            self.root.wait_window(complete_dialog.top)
     
     def open_submit_approval_dialog(self):
         if self.current_script_id:
@@ -964,7 +960,7 @@ class ScriptDialog:
                 entry = ttk.Entry(frame, textvariable=var, width=30)
             elif key == 'finalized_status':
                 var = tk.StringVar(value='未定稿')
-                entry = ttk.Combobox(frame, textvariable=var, values=['未定稿', '已定稿'], width=27)
+                entry = ttk.Combobox(frame, textvariable=var, values=['未定稿'], width=27, state='readonly')
             elif key == 'remarks':
                 var = tk.StringVar()
                 entry = ttk.Text(frame, width=30, height=3)
@@ -1649,9 +1645,13 @@ class CustomerConfirmDialog:
         
         self.top = ttk.Toplevel(parent)
         self.top.title("客户确认")
-        self.top.geometry("600x500")
+        self.top.geometry("700x650")
         self.top.resizable(False, False)
         self.top.grab_set()
+        
+        version = db_operations.get_version_by_script_id_and_version(script_id, version_number)
+        self.script_content = version[4] if version else ''
+        self.paragraphs = self._parse_paragraphs(self.script_content)
         
         frame = ttk.LabelFrame(self.top, text="客户确认信息")
         frame.pack(fill=BOTH, expand=True, padx=20, pady=20)
@@ -1668,12 +1668,24 @@ class CustomerConfirmDialog:
         self.confirmed_by_var = tk.StringVar()
         ttk.Entry(frame, textvariable=self.confirmed_by_var, width=50).pack(fill=X, padx=10, pady=5)
         
+        ttk.Label(frame, text="修改段落（可多选）:").pack(anchor=W, padx=10, pady=10)
+        self.paragraph_listbox = tk.Listbox(frame, selectmode=tk.MULTIPLE, width=70, height=6)
+        self.paragraph_listbox.pack(fill=X, padx=10, pady=5)
+        
+        for i, p in enumerate(self.paragraphs):
+            display_text = p[:40] + '...' if len(p) > 40 else p
+            self.paragraph_listbox.insert(i, f"{i+1}. {display_text}")
+        
+        self.select_all_paragraphs_var = tk.IntVar()
+        ttk.Checkbutton(frame, text="全选", variable=self.select_all_paragraphs_var, 
+                       command=self.toggle_select_all_paragraphs).pack(anchor=W, padx=20, pady=5)
+        
         ttk.Label(frame, text="反馈意见:").pack(anchor=W, padx=10, pady=10)
         self.feedback_text = tk.Text(frame, width=50, height=6)
         self.feedback_text.pack(fill=X, padx=10, pady=5)
         
-        info_label = ttk.Label(frame, text="注意：选择'通过'将直接标记为正式定稿；选择'退回'将自动生成反馈任务", 
-                               foreground='red', wraplength=500)
+        info_label = ttk.Label(frame, text="注意：选择'通过'将直接标记为正式定稿；选择'退回'将自动生成反馈任务并关联所选段落", 
+                               foreground='red', wraplength=600)
         info_label.pack(anchor=W, padx=10, pady=10)
         
         btn_frame = ttk.Frame(self.top)
@@ -1682,10 +1694,26 @@ class CustomerConfirmDialog:
         ttk.Button(btn_frame, text="确认提交", command=self.confirm).pack(side=LEFT, padx=20)
         ttk.Button(btn_frame, text="取消", command=self.top.destroy).pack(side=RIGHT, padx=20)
     
+    def _parse_paragraphs(self, content):
+        if not content:
+            return []
+        paragraphs = [p.strip() for p in content.split('\n') if p.strip()]
+        return paragraphs
+    
+    def toggle_select_all_paragraphs(self):
+        if self.select_all_paragraphs_var.get():
+            self.paragraph_listbox.select_set(0, tk.END)
+        else:
+            self.paragraph_listbox.select_clear(0, tk.END)
+    
     def confirm(self):
         confirm_result = self.result_var.get()
         confirmed_by = self.confirmed_by_var.get().strip()
         feedback = self.feedback_text.get('1.0', tk.END).strip()
+        
+        selected_indices = list(self.paragraph_listbox.curselection())
+        selected_paragraphs = [self.paragraphs[i] for i in selected_indices]
+        modify_paragraph = '; '.join([f"段落{i+1}" for i in selected_indices]) if selected_indices else '全文'
         
         if not confirm_result:
             messagebox.showerror("错误", "请选择确认结果")
@@ -1695,10 +1723,14 @@ class CustomerConfirmDialog:
             messagebox.showerror("错误", "请填写确认人姓名")
             return
         
+        if confirm_result == '退回' and not selected_paragraphs:
+            messagebox.showerror("错误", "退回时请至少选择一个修改段落")
+            return
+        
         action_text = "通过并定稿" if confirm_result == '通过' else "退回"
         
-        if messagebox.askyesno("确认提交", f"确定要【{action_text}】吗？\n确认人: {confirmed_by}\n反馈意见: {feedback[:50]}..." if feedback else f"确定要【{action_text}】吗？\n确认人: {confirmed_by}"):
-            success, error = db_operations.customer_confirm(self.script_id, self.version_number, confirm_result, feedback, confirmed_by)
+        if messagebox.askyesno("确认提交", f"确定要【{action_text}】吗？\n确认人: {confirmed_by}\n修改段落: {modify_paragraph}\n反馈意见: {feedback[:50]}..." if feedback else f"确定要【{action_text}】吗？\n确认人: {confirmed_by}\n修改段落: {modify_paragraph}"):
+            success, error = db_operations.customer_confirm(self.script_id, self.version_number, confirm_result, feedback, confirmed_by, modify_paragraph)
             if success:
                 messagebox.showinfo("成功", f"客户{action_text}成功")
                 self.app.load_approval_info(self.script_id)
@@ -1706,6 +1738,50 @@ class CustomerConfirmDialog:
                 self.app.load_script_detail(self.script_id)
                 self.app.refresh_stats()
                 self.top.destroy()
+            else:
+                messagebox.showerror("错误", f"操作失败: {error}")
+
+class CompleteTaskDialog:
+    def __init__(self, parent, task_id, paragraph, app):
+        self.parent = parent
+        self.task_id = task_id
+        self.app = app
+        
+        self.top = ttk.Toplevel(parent)
+        self.top.title("完成反馈任务")
+        self.top.geometry("450x300")
+        self.top.resizable(False, False)
+        self.top.grab_set()
+        
+        frame = ttk.LabelFrame(self.top, text="任务完成信息")
+        frame.pack(fill=BOTH, expand=True, padx=20, pady=20)
+        
+        ttk.Label(frame, text=f"修改段落: {paragraph}").pack(anchor=W, padx=10, pady=5)
+        
+        ttk.Label(frame, text="操作人姓名:").pack(anchor=W, padx=10, pady=10)
+        self.operator_var = tk.StringVar(value='系统')
+        ttk.Entry(frame, textvariable=self.operator_var, width=45).pack(fill=X, padx=10, pady=5)
+        
+        ttk.Label(frame, text="完成备注:").pack(anchor=W, padx=10, pady=10)
+        self.remark_text = tk.Text(frame, width=45, height=3)
+        self.remark_text.pack(fill=X, padx=10, pady=5)
+        
+        btn_frame = ttk.Frame(self.top)
+        btn_frame.pack(fill=X, padx=20, pady=(0, 20))
+        
+        ttk.Button(btn_frame, text="确认完成", command=self.complete).pack(side=LEFT, padx=20)
+        ttk.Button(btn_frame, text="取消", command=self.top.destroy).pack(side=RIGHT, padx=20)
+    
+    def complete(self):
+        operator_name = self.operator_var.get().strip() or '系统'
+        
+        if messagebox.askyesno("确认完成", f"确定要完成此任务吗？\n操作人: {operator_name}"):
+            success, error = db_operations.update_feedback_task_status(self.task_id, '已完成', operator_name=operator_name)
+            if success:
+                messagebox.showinfo("成功", "任务已标记为完成")
+                self.top.destroy()
+                self.app.load_feedback_tasks(self.app.current_script_id)
+                self.app.load_approval_info(self.app.current_script_id)
             else:
                 messagebox.showerror("错误", f"操作失败: {error}")
 
