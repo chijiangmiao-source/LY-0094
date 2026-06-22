@@ -299,3 +299,300 @@ def get_rollback_records_by_script_id(script_id):
         SELECT id, script_id, from_version, to_version, rollback_reason, operated_by, operated_at
         FROM rollback_record WHERE script_id = ? ORDER BY operated_at DESC
     ''', (script_id,))
+
+def submit_for_approval(script_id, version_number, operator_name='系统', operator_role='主持人'):
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        existing = execute_query('''
+            SELECT id FROM approval_flow WHERE script_id = ? AND version_number = ?
+        ''', (script_id, version_number), fetch_one=True)
+        
+        if existing:
+            execute_non_query('''
+                UPDATE approval_flow SET status='待确认', current_approver='主持人', updated_at=?
+                WHERE script_id = ? AND version_number = ?
+            ''', (now, script_id, version_number))
+            flow_id = existing[0]
+        else:
+            flow_id = execute_non_query('''
+                INSERT INTO approval_flow (script_id, version_number, status, current_approver, created_at, updated_at)
+                VALUES (?, ?, '待确认', '主持人', ?, ?)
+            ''', (script_id, version_number, now, now))
+        
+        add_approval_history(flow_id, script_id, version_number, '提交审批', operator_role, operator_name, '提交版本审批')
+        
+        return flow_id, None
+    except Exception as e:
+        return None, str(e)
+
+def update_approval_flow(flow_id, status=None, current_approver=None, customer_view_time=None,
+                          customer_confirm_result=None, customer_feedback=None, customer_confirmed_by=None, 
+                          customer_confirmed_at=None):
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        sql = 'UPDATE approval_flow SET updated_at=?'
+        params = [now]
+        
+        if status:
+            sql += ', status=?'
+            params.append(status)
+        if current_approver:
+            sql += ', current_approver=?'
+            params.append(current_approver)
+        if customer_view_time:
+            sql += ', customer_view_time=?'
+            params.append(customer_view_time)
+        if customer_confirm_result:
+            sql += ', customer_confirm_result=?'
+            params.append(customer_confirm_result)
+        if customer_feedback:
+            sql += ', customer_feedback=?'
+            params.append(customer_feedback)
+        if customer_confirmed_by:
+            sql += ', customer_confirmed_by=?'
+            params.append(customer_confirmed_by)
+        if customer_confirmed_at:
+            sql += ', customer_confirmed_at=?'
+            params.append(customer_confirmed_at)
+        
+        sql += ' WHERE id=?'
+        params.append(flow_id)
+        
+        execute_non_query(sql, params)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def get_approval_flow_by_script_and_version(script_id, version_number):
+    return execute_query('''
+        SELECT id, script_id, version_number, status, current_approver, customer_view_time,
+               customer_confirm_result, customer_feedback, customer_confirmed_by, customer_confirmed_at,
+               created_at, updated_at
+        FROM approval_flow WHERE script_id = ? AND version_number = ?
+    ''', (script_id, version_number), fetch_one=True)
+
+def get_approval_flow_by_script_id(script_id):
+    return execute_query('''
+        SELECT id, script_id, version_number, status, current_approver, customer_view_time,
+               customer_confirm_result, customer_feedback, customer_confirmed_by, customer_confirmed_at,
+               created_at, updated_at
+        FROM approval_flow WHERE script_id = ? ORDER BY version_number DESC
+    ''', (script_id,))
+
+def get_approval_flow_by_id(flow_id):
+    return execute_query('''
+        SELECT id, script_id, version_number, status, current_approver, customer_view_time,
+               customer_confirm_result, customer_feedback, customer_confirmed_by, customer_confirmed_at,
+               created_at, updated_at
+        FROM approval_flow WHERE id = ?
+    ''', (flow_id,), fetch_one=True)
+
+def record_customer_view(script_id, version_number):
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        flow = get_approval_flow_by_script_and_version(script_id, version_number)
+        if flow:
+            return update_approval_flow(flow[0], customer_view_time=now)
+        return False, '审批流程不存在'
+    except Exception as e:
+        return False, str(e)
+
+def customer_confirm(script_id, version_number, confirm_result, feedback, confirmed_by):
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        flow = get_approval_flow_by_script_and_version(script_id, version_number)
+        if not flow:
+            return False, '审批流程不存在'
+        
+        flow_id = flow[0]
+        
+        if confirm_result == '通过':
+            success, error = update_approval_flow(
+                flow_id, 
+                status='已通过',
+                customer_confirm_result='通过',
+                customer_feedback=feedback,
+                customer_confirmed_by=confirmed_by,
+                customer_confirmed_at=now
+            )
+            if success:
+                execute_non_query('''
+                    UPDATE host_script SET finalized_status='已定稿', updated_at=? WHERE id=?
+                ''', (now, script_id))
+                
+                execute_non_query('''
+                    UPDATE version_history SET status='已定稿', updated_at=? WHERE script_id=? AND version_number=?
+                ''', (now, script_id, version_number))
+                
+                add_approval_history(flow_id, script_id, version_number, '客户确认通过', '客户', confirmed_by, feedback or '无意见')
+        
+        elif confirm_result == '退回':
+            success, error = update_approval_flow(
+                flow_id, 
+                status='已退回',
+                customer_confirm_result='退回',
+                customer_feedback=feedback,
+                customer_confirmed_by=confirmed_by,
+                customer_confirmed_at=now
+            )
+            if success:
+                add_approval_history(flow_id, script_id, version_number, '客户退回', '客户', confirmed_by, feedback)
+                
+                create_feedback_task(flow_id, script_id, version_number, '全文', feedback)
+        
+        else:
+            return False, '无效的确认结果'
+        
+        return success, error
+    except Exception as e:
+        return False, str(e)
+
+def add_approval_history(flow_id, script_id, version_number, action, operator_role, operator_name='系统', remark=''):
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        execute_non_query('''
+            INSERT INTO approval_history (flow_id, script_id, version_number, action, operator_role, operator_name, remark, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (flow_id, script_id, version_number, action, operator_role, operator_name, remark, now))
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def get_approval_history_by_flow_id(flow_id):
+    return execute_query('''
+        SELECT id, flow_id, script_id, version_number, action, operator_role, operator_name, remark, created_at
+        FROM approval_history WHERE flow_id = ? ORDER BY created_at ASC
+    ''', (flow_id,))
+
+def get_approval_history_by_script_id(script_id):
+    return execute_query('''
+        SELECT ah.id, ah.flow_id, ah.script_id, ah.version_number, ah.action, ah.operator_role, 
+               ah.operator_name, ah.remark, ah.created_at, af.status
+        FROM approval_history ah
+        LEFT JOIN approval_flow af ON ah.flow_id = af.id
+        WHERE ah.script_id = ? ORDER BY ah.version_number DESC, ah.created_at ASC
+    ''', (script_id,))
+
+def create_feedback_task(flow_id, script_id, version_number, modify_paragraph, feedback_content, assigned_to='策划师'):
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        task_id = execute_non_query('''
+            INSERT INTO approval_task (flow_id, script_id, version_number, modify_paragraph, 
+                                      feedback_content, status, assigned_to, created_at)
+            VALUES (?, ?, ?, ?, ?, '待处理', ?, ?)
+        ''', (flow_id, script_id, version_number, modify_paragraph, feedback_content, assigned_to, now))
+        return task_id, None
+    except Exception as e:
+        return None, str(e)
+
+def get_feedback_tasks_by_flow_id(flow_id):
+    return execute_query('''
+        SELECT id, flow_id, script_id, version_number, modify_paragraph, feedback_content, 
+               status, assigned_to, created_at, completed_at
+        FROM approval_task WHERE flow_id = ? ORDER BY created_at DESC
+    ''', (flow_id,))
+
+def get_feedback_tasks_by_script_id(script_id):
+    return execute_query('''
+        SELECT id, flow_id, script_id, version_number, modify_paragraph, feedback_content, 
+               status, assigned_to, created_at, completed_at
+        FROM approval_task WHERE script_id = ? ORDER BY created_at DESC
+    ''', (script_id,))
+
+def update_feedback_task_status(task_id, status, completed_at=None):
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    completed_at = completed_at or now
+    try:
+        execute_non_query('''
+            UPDATE approval_task SET status=?, completed_at=? WHERE id=?
+        ''', (status, completed_at, task_id))
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def approve_by_role(flow_id, script_id, version_number, action, operator_role, operator_name, remark=''):
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        flow = get_approval_flow_by_id(flow_id)
+        if not flow:
+            return False, '审批流程不存在'
+        
+        if action == '确认':
+            if operator_role == '主持人':
+                update_approval_flow(flow_id, current_approver='策划师')
+                add_approval_history(flow_id, script_id, version_number, '主持人确认', '主持人', operator_name, remark)
+            elif operator_role == '策划师':
+                update_approval_flow(flow_id, current_approver='客户')
+                add_approval_history(flow_id, script_id, version_number, '策划师确认', '策划师', operator_name, remark)
+        
+        elif action == '催办':
+            add_approval_history(flow_id, script_id, version_number, '催办', operator_role, operator_name, remark)
+        
+        elif action == '退回':
+            update_approval_flow(flow_id, status='已退回', current_approver=operator_role)
+            add_approval_history(flow_id, script_id, version_number, f'{operator_role}退回', operator_role, operator_name, remark)
+            
+            create_feedback_task(flow_id, script_id, version_number, '全文', remark)
+        
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def get_all_approval_flows():
+    return execute_query('''
+        SELECT af.id, af.script_id, af.version_number, af.status, af.current_approver, 
+               hs.record_no, hs.bride_name, hs.groom_name, hs.host_name,
+               af.created_at, af.customer_confirmed_at
+        FROM approval_flow af
+        LEFT JOIN host_script hs ON af.script_id = hs.id
+        ORDER BY af.created_at DESC
+    ''')
+
+def export_approval_history(script_id=None, filename=None):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "审批历史"
+    
+    headers = ['审批ID', '脚本ID', '记录编号', '版本号', '操作', '操作角色', '操作人', '备注', '操作时间']
+    for i, header in enumerate(headers):
+        cell = ws.cell(row=1, column=i + 1, value=header)
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color='4472C4', end_color='4472C4', fill_type='solid')
+        cell.font.color = openpyxl.styles.colors.WHITE
+        cell.alignment = Alignment(horizontal='center')
+    
+    if script_id:
+        histories = get_approval_history_by_script_id(script_id)
+    else:
+        histories = execute_query('''
+            SELECT ah.id, ah.script_id, hs.record_no, ah.version_number, ah.action, 
+                   ah.operator_role, ah.operator_name, ah.remark, ah.created_at
+            FROM approval_history ah
+            LEFT JOIN host_script hs ON ah.script_id = hs.id
+            ORDER BY ah.created_at DESC
+        ''')
+    
+    row_idx = 2
+    for h in histories:
+        ws.cell(row=row_idx, column=1, value=h[0])
+        ws.cell(row=row_idx, column=2, value=h[1])
+        ws.cell(row=row_idx, column=3, value=h[2] if len(h) > 2 else '')
+        ws.cell(row=row_idx, column=4, value=h[3] if len(h) > 3 else '')
+        ws.cell(row=row_idx, column=5, value=h[4] if len(h) > 4 else '')
+        ws.cell(row=row_idx, column=6, value=h[5] if len(h) > 5 else '')
+        ws.cell(row=row_idx, column=7, value=h[6] if len(h) > 6 else '')
+        ws.cell(row=row_idx, column=8, value=h[7] if len(h) > 7 else '')
+        ws.cell(row=row_idx, column=9, value=h[8] if len(h) > 8 else '')
+        row_idx += 1
+    
+    for col in ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I']:
+        ws.column_dimensions[col].width = 20
+    
+    if not filename:
+        filename = f'审批历史_{datetime.datetime.now().strftime("%Y%m%d")}.xlsx'
+    
+    wb.save(filename)
+    return filename, None

@@ -83,6 +83,58 @@ def init_database():
         )
     ''')
     
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS approval_flow (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            script_id INTEGER NOT NULL,
+            version_number REAL NOT NULL,
+            status TEXT DEFAULT '待确认',
+            current_approver TEXT,
+            customer_view_time TEXT,
+            customer_confirm_result TEXT,
+            customer_feedback TEXT,
+            customer_confirmed_by TEXT,
+            customer_confirmed_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (script_id) REFERENCES host_script(id) ON DELETE CASCADE,
+            UNIQUE(script_id, version_number)
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS approval_task (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            flow_id INTEGER NOT NULL,
+            script_id INTEGER NOT NULL,
+            version_number REAL NOT NULL,
+            modify_paragraph TEXT NOT NULL,
+            feedback_content TEXT NOT NULL,
+            status TEXT DEFAULT '待处理',
+            assigned_to TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT,
+            FOREIGN KEY (flow_id) REFERENCES approval_flow(id) ON DELETE CASCADE,
+            FOREIGN KEY (script_id) REFERENCES host_script(id) ON DELETE CASCADE
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS approval_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            flow_id INTEGER NOT NULL,
+            script_id INTEGER NOT NULL,
+            version_number REAL NOT NULL,
+            action TEXT NOT NULL,
+            operator_role TEXT NOT NULL,
+            operator_name TEXT DEFAULT '系统',
+            remark TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (flow_id) REFERENCES approval_flow(id) ON DELETE CASCADE,
+            FOREIGN KEY (script_id) REFERENCES host_script(id) ON DELETE CASCADE
+        )
+    ''')
+    
     conn.commit()
     conn.close()
 

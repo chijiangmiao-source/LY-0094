@@ -134,12 +134,16 @@ class WeddingScriptApp:
         self.version_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.version_frame, text="版本管理")
         
+        self.approval_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.approval_frame, text="审批流程")
+        
         self.stats_frame = ttk.Frame(self.notebook)
         self.notebook.add(self.stats_frame, text="统计分析")
         
         self.setup_detail_panel(self.detail_frame)
         self.setup_change_panel(self.change_frame)
         self.setup_version_panel(self.version_frame)
+        self.setup_approval_panel(self.approval_frame)
         self.setup_stats_panel(self.stats_frame)
     
     def setup_detail_panel(self, parent):
@@ -283,6 +287,230 @@ class WeddingScriptApp:
         self.rollback_tree.configure(yscrollcommand=rollback_scrollbar.set)
         rollback_scrollbar.pack(side=RIGHT, fill=Y)
         self.rollback_tree.pack(fill=BOTH, expand=True)
+    
+    def setup_approval_panel(self, parent):
+        btn_frame = ttk.Frame(parent)
+        btn_frame.pack(fill=X, padx=10, pady=10)
+        
+        self.submit_approval_btn = ttk.Button(btn_frame, text="提交审批", command=self.open_submit_approval_dialog, state=DISABLED)
+        self.submit_approval_btn.pack(side=LEFT)
+        
+        self.host_approve_btn = ttk.Button(btn_frame, text="主持人确认", command=self.open_host_approve_dialog, state=DISABLED)
+        self.host_approve_btn.pack(side=LEFT, padx=10)
+        
+        self.planner_approve_btn = ttk.Button(btn_frame, text="策划师确认", command=self.open_planner_approve_dialog, state=DISABLED)
+        self.planner_approve_btn.pack(side=LEFT, padx=10)
+        
+        self.customer_confirm_btn = ttk.Button(btn_frame, text="客户确认", command=self.open_customer_confirm_dialog, state=DISABLED)
+        self.customer_confirm_btn.pack(side=LEFT, padx=10)
+        
+        self.export_approval_btn = ttk.Button(btn_frame, text="导出审批历史", command=self.export_approval_history, state=DISABLED)
+        self.export_approval_btn.pack(side=RIGHT)
+        
+        status_frame = ttk.LabelFrame(parent, text="审批状态")
+        status_frame.pack(fill=X, padx=10, pady=5)
+        
+        self.approval_status_vars = {}
+        status_fields = [
+            ('当前状态', 'status'),
+            ('当前审批人', 'current_approver'),
+            ('客户查看时间', 'customer_view_time'),
+            ('确认结果', 'customer_confirm_result'),
+            ('退回意见', 'customer_feedback'),
+            ('确认人', 'customer_confirmed_by'),
+            ('确认时间', 'customer_confirmed_at'),
+            ('提交时间', 'created_at')
+        ]
+        
+        for i, (label, key) in enumerate(status_fields):
+            ttk.Label(status_frame, text=f"{label}:").grid(row=i, column=0, padx=10, pady=5, sticky=W)
+            var = tk.StringVar(value='-')
+            self.approval_status_vars[key] = var
+            if key == 'customer_feedback':
+                text = ttk.Label(status_frame, textvariable=var, wraplength=500, justify=LEFT)
+                text.grid(row=i, column=1, padx=10, pady=5, sticky=W)
+            else:
+                ttk.Label(status_frame, textvariable=var).grid(row=i, column=1, padx=10, pady=5, sticky=W)
+        
+        history_frame = ttk.LabelFrame(parent, text="审批历史")
+        history_frame.pack(fill=BOTH, expand=True, padx=10, pady=5)
+        
+        history_columns = ('id', 'action', 'role', 'operator', 'remark', 'created_at')
+        self.approval_history_tree = ttk.Treeview(history_frame, columns=history_columns, show='headings', height=8)
+        self.approval_history_tree.heading('action', text='操作')
+        self.approval_history_tree.heading('role', text='角色')
+        self.approval_history_tree.heading('operator', text='操作人')
+        self.approval_history_tree.heading('remark', text='备注')
+        self.approval_history_tree.heading('created_at', text='时间')
+        
+        self.approval_history_tree.column('id', width=0, stretch=NO)
+        self.approval_history_tree.column('action', width=120)
+        self.approval_history_tree.column('role', width=80)
+        self.approval_history_tree.column('operator', width=80)
+        self.approval_history_tree.column('remark', width=200)
+        self.approval_history_tree.column('created_at', width=160)
+        
+        history_scrollbar = ttk.Scrollbar(history_frame, orient=VERTICAL, command=self.approval_history_tree.yview)
+        self.approval_history_tree.configure(yscrollcommand=history_scrollbar.set)
+        history_scrollbar.pack(side=RIGHT, fill=Y)
+        self.approval_history_tree.pack(fill=BOTH, expand=True)
+        
+        task_frame = ttk.LabelFrame(parent, text="反馈任务")
+        task_frame.pack(fill=BOTH, expand=True, padx=10, pady=5)
+        
+        task_columns = ('id', 'paragraph', 'feedback', 'status', 'assigned_to', 'created_at', 'completed_at')
+        self.feedback_task_tree = ttk.Treeview(task_frame, columns=task_columns, show='headings', height=6)
+        self.feedback_task_tree.heading('paragraph', text='修改段落')
+        self.feedback_task_tree.heading('feedback', text='反馈内容')
+        self.feedback_task_tree.heading('status', text='状态')
+        self.feedback_task_tree.heading('assigned_to', text='指派给')
+        self.feedback_task_tree.heading('created_at', text='创建时间')
+        self.feedback_task_tree.heading('completed_at', text='完成时间')
+        
+        self.feedback_task_tree.column('id', width=0, stretch=NO)
+        self.feedback_task_tree.column('paragraph', width=100)
+        self.feedback_task_tree.column('feedback', width=250)
+        self.feedback_task_tree.column('status', width=80)
+        self.feedback_task_tree.column('assigned_to', width=80)
+        self.feedback_task_tree.column('created_at', width=120)
+        self.feedback_task_tree.column('completed_at', width=120)
+        
+        task_scrollbar = ttk.Scrollbar(task_frame, orient=VERTICAL, command=self.feedback_task_tree.yview)
+        self.feedback_task_tree.configure(yscrollcommand=task_scrollbar.set)
+        task_scrollbar.pack(side=RIGHT, fill=Y)
+        self.feedback_task_tree.pack(fill=BOTH, expand=True)
+        
+        self.complete_task_btn = ttk.Button(task_frame, text="标记完成", command=self.complete_feedback_task, state=DISABLED)
+        self.complete_task_btn.pack(side=LEFT, padx=10, pady=5)
+        
+        self.feedback_task_tree.bind('<<TreeviewSelect>>', self.on_task_select)
+    
+    def on_task_select(self, event):
+        selection = self.feedback_task_tree.selection()
+        if selection:
+            item = self.feedback_task_tree.item(selection[0])
+            status = item['values'][3]
+            self.complete_task_btn.config(state=NORMAL if status == '待处理' else DISABLED)
+        else:
+            self.complete_task_btn.config(state=DISABLED)
+    
+    def complete_feedback_task(self):
+        selection = self.feedback_task_tree.selection()
+        if selection:
+            item = self.feedback_task_tree.item(selection[0])
+            task_id = item['values'][0]
+            
+            if messagebox.askyesno("确认完成", "确定要标记此任务为已完成吗？"):
+                success, error = db_operations.update_feedback_task_status(task_id, '已完成')
+                if success:
+                    messagebox.showinfo("成功", "任务已标记为完成")
+                    self.load_feedback_tasks(self.current_script_id)
+                else:
+                    messagebox.showerror("错误", f"操作失败: {error}")
+    
+    def open_submit_approval_dialog(self):
+        if self.current_script_id:
+            script = db_operations.get_host_script_by_id(self.current_script_id)
+            if script:
+                dialog = SubmitApprovalDialog(self.root, self, self.current_script_id, script[6])
+                self.root.wait_window(dialog.top)
+    
+    def open_host_approve_dialog(self):
+        if self.current_script_id:
+            script = db_operations.get_host_script_by_id(self.current_script_id)
+            if script:
+                dialog = ApproveDialog(self.root, self, self.current_script_id, script[6], '主持人')
+                self.root.wait_window(dialog.top)
+    
+    def open_planner_approve_dialog(self):
+        if self.current_script_id:
+            script = db_operations.get_host_script_by_id(self.current_script_id)
+            if script:
+                dialog = ApproveDialog(self.root, self, self.current_script_id, script[6], '策划师')
+                self.root.wait_window(dialog.top)
+    
+    def open_customer_confirm_dialog(self):
+        if self.current_script_id:
+            script = db_operations.get_host_script_by_id(self.current_script_id)
+            if script:
+                dialog = CustomerConfirmDialog(self.root, self, self.current_script_id, script[6])
+                self.root.wait_window(dialog.top)
+    
+    def export_approval_history(self):
+        if self.current_script_id:
+            filename, error = db_operations.export_approval_history(self.current_script_id)
+            if filename:
+                messagebox.showinfo("成功", f"审批历史已导出为: {filename}")
+            else:
+                messagebox.showerror("错误", f"导出失败: {error}")
+    
+    def load_approval_info(self, script_id):
+        script = db_operations.get_host_script_by_id(script_id)
+        if not script:
+            return
+        
+        version_number = script[6]
+        flow = db_operations.get_approval_flow_by_script_and_version(script_id, version_number)
+        
+        for key in self.approval_status_vars:
+            self.approval_status_vars[key].set('-')
+        
+        if flow:
+            status_map = {
+                'status': 3, 'current_approver': 4, 'customer_view_time': 5,
+                'customer_confirm_result': 6, 'customer_feedback': 7, 'customer_confirmed_by': 8,
+                'customer_confirmed_at': 9, 'created_at': 10
+            }
+            for key, idx in status_map.items():
+                if idx < len(flow) and flow[idx]:
+                    self.approval_status_vars[key].set(flow[idx])
+        
+        self.load_approval_history(script_id)
+        self.load_feedback_tasks(script_id)
+        
+        self.update_approval_buttons(script_id, version_number, flow)
+    
+    def update_approval_buttons(self, script_id, version_number, flow):
+        is_finalized = script_id and db_operations.get_host_script_by_id(script_id)[8] == '已定稿'
+        
+        if is_finalized:
+            self.submit_approval_btn.config(state=DISABLED)
+            self.host_approve_btn.config(state=DISABLED)
+            self.planner_approve_btn.config(state=DISABLED)
+            self.customer_confirm_btn.config(state=DISABLED)
+            return
+        
+        self.submit_approval_btn.config(state=NORMAL)
+        self.export_approval_btn.config(state=NORMAL)
+        
+        if flow:
+            status = flow[3]
+            current_approver = flow[4]
+            
+            self.host_approve_btn.config(state=NORMAL if current_approver == '主持人' else DISABLED)
+            self.planner_approve_btn.config(state=NORMAL if current_approver == '策划师' else DISABLED)
+            self.customer_confirm_btn.config(state=NORMAL if current_approver == '客户' else DISABLED)
+        else:
+            self.host_approve_btn.config(state=DISABLED)
+            self.planner_approve_btn.config(state=DISABLED)
+            self.customer_confirm_btn.config(state=DISABLED)
+    
+    def load_approval_history(self, script_id):
+        for item in self.approval_history_tree.get_children():
+            self.approval_history_tree.delete(item)
+        
+        histories = db_operations.get_approval_history_by_script_id(script_id)
+        for h in histories:
+            self.approval_history_tree.insert('', END, values=(h[0], h[4], h[5], h[6], h[7], h[8]))
+    
+    def load_feedback_tasks(self, script_id):
+        for item in self.feedback_task_tree.get_children():
+            self.feedback_task_tree.delete(item)
+        
+        tasks = db_operations.get_feedback_tasks_by_script_id(script_id)
+        for task in tasks:
+            self.feedback_task_tree.insert('', END, values=(task[0], task[4], task[5], task[6], 
+                                                              task[7], task[8], task[9]))
     
     def setup_stats_panel(self, parent):
         for widget in parent.winfo_children():
@@ -442,6 +670,7 @@ class WeddingScriptApp:
             self.load_change_records(script_id)
             self.load_version_history(script_id)
             self.load_rollback_records(script_id)
+            self.load_approval_info(script_id)
             
             script = db_operations.get_host_script_by_id(script_id)
             is_finalized = script and script[8] == '已定稿'
@@ -462,6 +691,13 @@ class WeddingScriptApp:
             self.rollback_btn.config(state=DISABLED)
             self.branch_btn.config(state=DISABLED)
             self.export_diff_btn.config(state=DISABLED)
+            
+            self.submit_approval_btn.config(state=DISABLED)
+            self.host_approve_btn.config(state=DISABLED)
+            self.planner_approve_btn.config(state=DISABLED)
+            self.customer_confirm_btn.config(state=DISABLED)
+            self.export_approval_btn.config(state=DISABLED)
+            self.complete_task_btn.config(state=DISABLED)
     
     def on_change_select(self, event):
         selection = self.change_tree.selection()
@@ -1290,6 +1526,188 @@ class ExportDiffDialog:
         
         messagebox.showinfo("成功", f"差异摘要已导出为: {filename}")
         self.top.destroy()
+
+class SubmitApprovalDialog:
+    def __init__(self, parent, app, script_id, version_number):
+        self.app = app
+        self.script_id = script_id
+        self.version_number = version_number
+        
+        self.top = ttk.Toplevel(parent)
+        self.top.title("提交审批")
+        self.top.geometry("500x350")
+        self.top.resizable(False, False)
+        self.top.grab_set()
+        
+        frame = ttk.LabelFrame(self.top, text="提交审批信息")
+        frame.pack(fill=BOTH, expand=True, padx=20, pady=20)
+        
+        ttk.Label(frame, text=f"脚本ID: {script_id}").pack(anchor=W, padx=10, pady=5)
+        ttk.Label(frame, text=f"版本号: {version_number}").pack(anchor=W, padx=10, pady=5)
+        
+        ttk.Label(frame, text="操作人角色*:").pack(anchor=W, padx=10, pady=10)
+        self.role_var = tk.StringVar(value='主持人')
+        self.role_combobox = ttk.Combobox(frame, textvariable=self.role_var, values=['主持人', '策划师'], width=45)
+        self.role_combobox.pack(fill=X, padx=10, pady=5)
+        
+        ttk.Label(frame, text="操作人姓名:").pack(anchor=W, padx=10, pady=10)
+        self.operator_var = tk.StringVar(value='系统')
+        ttk.Entry(frame, textvariable=self.operator_var, width=50).pack(fill=X, padx=10, pady=5)
+        
+        ttk.Label(frame, text="备注:").pack(anchor=W, padx=10, pady=10)
+        self.remark_text = tk.Text(frame, width=50, height=4)
+        self.remark_text.pack(fill=X, padx=10, pady=5)
+        
+        btn_frame = ttk.Frame(self.top)
+        btn_frame.pack(fill=X, padx=20, pady=(0, 20))
+        
+        ttk.Button(btn_frame, text="确认提交", command=self.submit).pack(side=LEFT, padx=20)
+        ttk.Button(btn_frame, text="取消", command=self.top.destroy).pack(side=RIGHT, padx=20)
+    
+    def submit(self):
+        operator_role = self.role_var.get()
+        operator_name = self.operator_var.get().strip() or '系统'
+        remark = self.remark_text.get('1.0', tk.END).strip()
+        
+        if messagebox.askyesno("确认提交", f"确定要提交版本 {self.version_number} 进行审批吗？\n操作人: {operator_name} ({operator_role})"):
+            flow_id, error = db_operations.submit_for_approval(self.script_id, self.version_number, operator_name, operator_role)
+            if flow_id:
+                messagebox.showinfo("成功", "审批已提交")
+                self.app.load_approval_info(self.script_id)
+                self.app.load_script_list()
+                self.top.destroy()
+            else:
+                messagebox.showerror("错误", f"提交失败: {error}")
+
+class ApproveDialog:
+    def __init__(self, parent, app, script_id, version_number, role):
+        self.app = app
+        self.script_id = script_id
+        self.version_number = version_number
+        self.role = role
+        
+        self.top = ttk.Toplevel(parent)
+        self.top.title(f"{role}确认")
+        self.top.geometry("500x400")
+        self.top.resizable(False, False)
+        self.top.grab_set()
+        
+        frame = ttk.LabelFrame(self.top, text=f"{role}确认信息")
+        frame.pack(fill=BOTH, expand=True, padx=20, pady=20)
+        
+        ttk.Label(frame, text=f"脚本ID: {script_id}").pack(anchor=W, padx=10, pady=5)
+        ttk.Label(frame, text=f"版本号: {version_number}").pack(anchor=W, padx=10, pady=5)
+        ttk.Label(frame, text=f"当前角色: {role}").pack(anchor=W, padx=10, pady=5)
+        
+        ttk.Label(frame, text="操作人姓名:").pack(anchor=W, padx=10, pady=10)
+        self.operator_var = tk.StringVar(value='系统')
+        ttk.Entry(frame, textvariable=self.operator_var, width=50).pack(fill=X, padx=10, pady=5)
+        
+        ttk.Label(frame, text="操作类型:").pack(anchor=W, padx=10, pady=10)
+        self.action_var = tk.StringVar(value='确认')
+        ttk.Radiobutton(frame, text="确认", variable=self.action_var, value='确认').pack(anchor=W, padx=20, pady=5)
+        ttk.Radiobutton(frame, text="退回", variable=self.action_var, value='退回').pack(anchor=W, padx=20, pady=5)
+        ttk.Radiobutton(frame, text="催办", variable=self.action_var, value='催办').pack(anchor=W, padx=20, pady=5)
+        
+        ttk.Label(frame, text="备注/退回原因:").pack(anchor=W, padx=10, pady=10)
+        self.remark_text = tk.Text(frame, width=50, height=4)
+        self.remark_text.pack(fill=X, padx=10, pady=5)
+        
+        btn_frame = ttk.Frame(self.top)
+        btn_frame.pack(fill=X, padx=20, pady=(0, 20))
+        
+        ttk.Button(btn_frame, text="确认操作", command=self.approve).pack(side=LEFT, padx=20)
+        ttk.Button(btn_frame, text="取消", command=self.top.destroy).pack(side=RIGHT, padx=20)
+    
+    def approve(self):
+        action = self.action_var.get()
+        operator_name = self.operator_var.get().strip() or '系统'
+        remark = self.remark_text.get('1.0', tk.END).strip()
+        
+        flow = db_operations.get_approval_flow_by_script_and_version(self.script_id, self.version_number)
+        if not flow:
+            messagebox.showerror("错误", "审批流程不存在，请先提交审批")
+            return
+        
+        flow_id = flow[0]
+        
+        if messagebox.askyesno("确认操作", f"确定要执行【{action}】操作吗？\n角色: {self.role}\n操作人: {operator_name}"):
+            success, error = db_operations.approve_by_role(flow_id, self.script_id, self.version_number, action, self.role, operator_name, remark)
+            if success:
+                messagebox.showinfo("成功", f"{self.role}{action}成功")
+                self.app.load_approval_info(self.script_id)
+                self.app.load_script_list()
+                self.top.destroy()
+            else:
+                messagebox.showerror("错误", f"操作失败: {error}")
+
+class CustomerConfirmDialog:
+    def __init__(self, parent, app, script_id, version_number):
+        self.app = app
+        self.script_id = script_id
+        self.version_number = version_number
+        
+        self.top = ttk.Toplevel(parent)
+        self.top.title("客户确认")
+        self.top.geometry("600x500")
+        self.top.resizable(False, False)
+        self.top.grab_set()
+        
+        frame = ttk.LabelFrame(self.top, text="客户确认信息")
+        frame.pack(fill=BOTH, expand=True, padx=20, pady=20)
+        
+        ttk.Label(frame, text=f"脚本ID: {script_id}").pack(anchor=W, padx=10, pady=5)
+        ttk.Label(frame, text=f"版本号: {version_number}").pack(anchor=W, padx=10, pady=5)
+        
+        ttk.Label(frame, text="确认结果*:").pack(anchor=W, padx=10, pady=10)
+        self.result_var = tk.StringVar()
+        ttk.Radiobutton(frame, text="通过", variable=self.result_var, value='通过').pack(anchor=W, padx=20, pady=5)
+        ttk.Radiobutton(frame, text="退回", variable=self.result_var, value='退回').pack(anchor=W, padx=20, pady=5)
+        
+        ttk.Label(frame, text="确认人姓名*:").pack(anchor=W, padx=10, pady=10)
+        self.confirmed_by_var = tk.StringVar()
+        ttk.Entry(frame, textvariable=self.confirmed_by_var, width=50).pack(fill=X, padx=10, pady=5)
+        
+        ttk.Label(frame, text="反馈意见:").pack(anchor=W, padx=10, pady=10)
+        self.feedback_text = tk.Text(frame, width=50, height=6)
+        self.feedback_text.pack(fill=X, padx=10, pady=5)
+        
+        info_label = ttk.Label(frame, text="注意：选择'通过'将直接标记为正式定稿；选择'退回'将自动生成反馈任务", 
+                               foreground='red', wraplength=500)
+        info_label.pack(anchor=W, padx=10, pady=10)
+        
+        btn_frame = ttk.Frame(self.top)
+        btn_frame.pack(fill=X, padx=20, pady=(0, 20))
+        
+        ttk.Button(btn_frame, text="确认提交", command=self.confirm).pack(side=LEFT, padx=20)
+        ttk.Button(btn_frame, text="取消", command=self.top.destroy).pack(side=RIGHT, padx=20)
+    
+    def confirm(self):
+        confirm_result = self.result_var.get()
+        confirmed_by = self.confirmed_by_var.get().strip()
+        feedback = self.feedback_text.get('1.0', tk.END).strip()
+        
+        if not confirm_result:
+            messagebox.showerror("错误", "请选择确认结果")
+            return
+        
+        if not confirmed_by:
+            messagebox.showerror("错误", "请填写确认人姓名")
+            return
+        
+        action_text = "通过并定稿" if confirm_result == '通过' else "退回"
+        
+        if messagebox.askyesno("确认提交", f"确定要【{action_text}】吗？\n确认人: {confirmed_by}\n反馈意见: {feedback[:50]}..." if feedback else f"确定要【{action_text}】吗？\n确认人: {confirmed_by}"):
+            success, error = db_operations.customer_confirm(self.script_id, self.version_number, confirm_result, feedback, confirmed_by)
+            if success:
+                messagebox.showinfo("成功", f"客户{action_text}成功")
+                self.app.load_approval_info(self.script_id)
+                self.app.load_script_list()
+                self.app.load_script_detail(self.script_id)
+                self.app.refresh_stats()
+                self.top.destroy()
+            else:
+                messagebox.showerror("错误", f"操作失败: {error}")
 
 if __name__ == "__main__":
     root = ttkb.Window(themename='cosmo')
