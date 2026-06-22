@@ -1,3 +1,6 @@
+import os
+
+script = '''
 import matplotlib
 matplotlib.use('TkAgg')
 
@@ -955,33 +958,33 @@ class VersionCompareDialog:
         content_a = version_a[4] if version_a[4] else ''
         content_b = version_b[4] if version_b[4] else ''
         
-        lines_a = content_a.split('\n')
-        lines_b = content_b.split('\n')
+        lines_a = content_a.split('\\n')
+        lines_b = content_b.split('\\n')
         
         differ = difflib.Differ()
         diff_result = differ.compare(lines_a, lines_b)
         
         self.diff_text.delete('1.0', tk.END)
-        self.diff_text.insert('1.0', f"版本 {version_a[2]} ({version_a[3]}) → 版本 {version_b[2]} ({version_b[3]})\n\n", 'header')
+        self.diff_text.insert('1.0', f"版本 {version_a[2]} ({version_a[3]}) → 版本 {version_b[2]} ({version_b[3]})\\n\\n", 'header')
         
         added_count = 0
         removed_count = 0
         
         for line in diff_result:
             if line.startswith('+ '):
-                self.diff_text.insert(tk.END, line + '\n', 'added')
+                self.diff_text.insert(tk.END, line + '\\n', 'added')
                 added_count += 1
             elif line.startswith('- '):
-                self.diff_text.insert(tk.END, line + '\n', 'removed')
+                self.diff_text.insert(tk.END, line + '\\n', 'removed')
                 removed_count += 1
             elif line.startswith('? '):
                 continue
             else:
-                self.diff_text.insert(tk.END, line + '\n')
+                self.diff_text.insert(tk.END, line + '\\n')
         
-        self.diff_text.insert(tk.END, f"\n\n差异统计:\n", 'header')
-        self.diff_text.insert(tk.END, f"新增段落: {added_count}\n")
-        self.diff_text.insert(tk.END, f"删除段落: {removed_count}\n")
+        self.diff_text.insert(tk.END, f"\\n\\n差异统计:\\n", 'header')
+        self.diff_text.insert(tk.END, f"新增段落: {added_count}\\n")
+        self.diff_text.insert(tk.END, f"删除段落: {removed_count}\\n")
 
 class RollbackDialog:
     def __init__(self, parent, app, script_id):
@@ -1040,7 +1043,7 @@ class RollbackDialog:
             messagebox.showwarning("警告", "当前版本已是目标版本，无需回滚")
             return
         
-        if messagebox.askyesno("确认回滚", f"确定要将当前版本回滚到版本 {target_version_number} 吗？\n回滚原因: {rollback_reason}"):
+        if messagebox.askyesno("确认回滚", f"确定要将当前版本回滚到版本 {target_version_number} 吗？\\n回滚原因: {rollback_reason}"):
             success, error = db_operations.rollback_to_version(self.script_id, target_version_number, rollback_reason, operated_by)
             if success:
                 messagebox.showinfo("成功", "回滚成功")
@@ -1184,8 +1187,8 @@ class ExportDiffDialog:
         content_a = version_a[4] if version_a[4] else ''
         content_b = version_b[4] if version_b[4] else ''
         
-        lines_a = content_a.split('\n')
-        lines_b = content_b.split('\n')
+        lines_a = content_a.split('\\n')
+        lines_b = content_b.split('\\n')
         
         differ = difflib.Differ()
         diff_result = list(differ.compare(lines_a, lines_b))
@@ -1267,3 +1270,9 @@ if __name__ == "__main__":
     root = ttkb.Window(themename='cosmo')
     app = WeddingScriptApp(root)
     root.mainloop()
+'''
+
+with open('main.py', 'w', encoding='utf-8') as f:
+    f.write(script.strip())
+
+print('main.py generated successfully')

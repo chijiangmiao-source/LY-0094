@@ -18,12 +18,18 @@ def init_database():
             current_version REAL DEFAULT 1.0,
             feedback_round INTEGER DEFAULT 0,
             finalized_status TEXT DEFAULT '未定稿',
+            script_content TEXT,
             remarks TEXT,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(bride_name, groom_name, wedding_date)
         )
     ''')
+    
+    try:
+        cursor.execute('ALTER TABLE host_script ADD COLUMN script_content TEXT')
+    except sqlite3.OperationalError:
+        pass
     
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS change_record (
@@ -46,6 +52,34 @@ def init_database():
             occurrence_count INTEGER DEFAULT 1,
             first_occurrence TEXT DEFAULT CURRENT_TIMESTAMP,
             last_occurrence TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS version_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            script_id INTEGER NOT NULL,
+            version_number REAL NOT NULL,
+            version_label TEXT,
+            script_content TEXT NOT NULL,
+            status TEXT DEFAULT '草稿',
+            created_by TEXT DEFAULT '系统',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (script_id) REFERENCES host_script(id) ON DELETE CASCADE,
+            UNIQUE(script_id, version_number)
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS rollback_record (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            script_id INTEGER NOT NULL,
+            from_version REAL NOT NULL,
+            to_version REAL NOT NULL,
+            rollback_reason TEXT NOT NULL,
+            operated_by TEXT DEFAULT '系统',
+            operated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (script_id) REFERENCES host_script(id) ON DELETE CASCADE
         )
     ''')
     

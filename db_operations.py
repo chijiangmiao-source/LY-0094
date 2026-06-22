@@ -6,16 +6,17 @@ def generate_record_no():
     count = execute_query('SELECT COUNT(*) FROM host_script WHERE record_no LIKE ?', (f'{today}%',))[0][0]
     return f'{today}{str(count + 1).zfill(3)}'
 
-def add_host_script(bride_name, groom_name, wedding_date, host_name, current_version=1.0, feedback_round=0, finalized_status='未定稿', remarks=''):
+def add_host_script(bride_name, groom_name, wedding_date, host_name, current_version=1.0, feedback_round=0, finalized_status='未定稿', script_content='', remarks=''):
     record_no = generate_record_no()
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
         script_id = execute_non_query('''
             INSERT INTO host_script (record_no, bride_name, groom_name, wedding_date, host_name, 
-                                    current_version, feedback_round, finalized_status, remarks, 
+                                    current_version, feedback_round, finalized_status, script_content, remarks, 
                                     created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (record_no, bride_name, groom_name, wedding_date, host_name, current_version, feedback_round, finalized_status, remarks, now, now))
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (record_no, bride_name, groom_name, wedding_date, host_name, current_version, feedback_round, finalized_status, script_content, remarks, now, now))
+        save_version_history(script_id, current_version, '初稿', script_content, finalized_status)
         return script_id, None
     except Exception as e:
         return None, str(e)
@@ -23,26 +24,27 @@ def add_host_script(bride_name, groom_name, wedding_date, host_name, current_ver
 def get_all_host_scripts():
     return execute_query('''
         SELECT id, record_no, bride_name, groom_name, wedding_date, host_name, 
-               current_version, feedback_round, finalized_status, remarks, updated_at
+               current_version, feedback_round, finalized_status, script_content, remarks, updated_at
         FROM host_script ORDER BY updated_at DESC
     ''')
 
 def get_host_script_by_id(script_id):
     return execute_query('''
         SELECT id, record_no, bride_name, groom_name, wedding_date, host_name, 
-               current_version, feedback_round, finalized_status, remarks
+               current_version, feedback_round, finalized_status, script_content, remarks
         FROM host_script WHERE id = ?
     ''', (script_id,), fetch_one=True)
 
-def update_host_script(script_id, bride_name, groom_name, wedding_date, host_name, current_version, feedback_round, finalized_status, remarks):
+def update_host_script(script_id, bride_name, groom_name, wedding_date, host_name, current_version, feedback_round, finalized_status, script_content='', remarks=''):
     now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
         execute_non_query('''
             UPDATE host_script SET bride_name=?, groom_name=?, wedding_date=?, host_name=?, 
                                   current_version=?, feedback_round=?, finalized_status=?, 
-                                  remarks=?, updated_at=?
+                                  script_content=?, remarks=?, updated_at=?
             WHERE id = ?
-        ''', (bride_name, groom_name, wedding_date, host_name, current_version, feedback_round, finalized_status, remarks, now, script_id))
+        ''', (bride_name, groom_name, wedding_date, host_name, current_version, feedback_round, finalized_status, script_content, remarks, now, script_id))
+        save_version_history(script_id, current_version, '更新', script_content, finalized_status)
         return True, None
     except Exception as e:
         return False, str(e)
@@ -123,17 +125,17 @@ def get_high_freq_issues():
 def search_host_scripts(keyword):
     return execute_query('''
         SELECT id, record_no, bride_name, groom_name, wedding_date, host_name, 
-               current_version, feedback_round, finalized_status, remarks, updated_at
+               current_version, feedback_round, finalized_status, script_content, remarks, updated_at
         FROM host_script 
         WHERE record_no LIKE ? OR bride_name LIKE ? OR groom_name LIKE ? OR 
-              host_name LIKE ? OR remarks LIKE ?
+              host_name LIKE ? OR remarks LIKE ? OR script_content LIKE ?
         ORDER BY updated_at DESC
-    ''', (f'%{keyword}%', f'%{keyword}%', f'%{keyword}%', f'%{keyword}%', f'%{keyword}%'))
+    ''', (f'%{keyword}%', f'%{keyword}%', f'%{keyword}%', f'%{keyword}%', f'%{keyword}%', f'%{keyword}%'))
 
 def filter_host_scripts(host_name=None, finalized_status=None, date_range=None):
     sql = '''
         SELECT id, record_no, bride_name, groom_name, wedding_date, host_name, 
-               current_version, feedback_round, finalized_status, remarks, updated_at
+               current_version, feedback_round, finalized_status, script_content, remarks, updated_at
         FROM host_script WHERE 1=1
     '''
     params = []
@@ -186,3 +188,99 @@ def get_change_reason_stats():
 
 def get_host_names():
     return execute_query('SELECT DISTINCT host_name FROM host_script ORDER BY host_name')
+
+def save_version_history(script_id, version_number, version_label, script_content, status='草稿'):
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        existing = execute_query('SELECT id FROM version_history WHERE script_id = ? AND version_number = ?', 
+                                (script_id, version_number), fetch_one=True)
+        if existing:
+            execute_non_query('''
+                UPDATE version_history SET version_label=?, script_content=?, status=?, created_at=?
+                WHERE script_id = ? AND version_number = ?
+            ''', (version_label, script_content, status, now, script_id, version_number))
+        else:
+            execute_non_query('''
+                INSERT INTO version_history (script_id, version_number, version_label, script_content, status, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (script_id, version_number, version_label, script_content, status, now))
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def get_version_history_by_script_id(script_id):
+    return execute_query('''
+        SELECT id, script_id, version_number, version_label, script_content, status, created_by, created_at
+        FROM version_history WHERE script_id = ? ORDER BY version_number ASC
+    ''', (script_id,))
+
+def get_version_by_id(version_id):
+    return execute_query('''
+        SELECT id, script_id, version_number, version_label, script_content, status, created_by, created_at
+        FROM version_history WHERE id = ?
+    ''', (version_id,), fetch_one=True)
+
+def get_version_by_script_id_and_version(script_id, version_number):
+    return execute_query('''
+        SELECT id, script_id, version_number, version_label, script_content, status, created_by, created_at
+        FROM version_history WHERE script_id = ? AND version_number = ?
+    ''', (script_id, version_number), fetch_one=True)
+
+def create_version_branch(script_id, source_version, new_version_number, new_version_label=''):
+    source = get_version_by_script_id_and_version(script_id, source_version)
+    if not source:
+        return False, '源版本不存在'
+    
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        execute_non_query('''
+            INSERT INTO version_history (script_id, version_number, version_label, script_content, status, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (script_id, new_version_number, new_version_label if new_version_label else f'分支{new_version_number}', 
+              source[4], '草稿', '系统', now))
+        
+        script = get_host_script_by_id(script_id)
+        if script:
+            execute_non_query('''
+                UPDATE host_script SET current_version=?, finalized_status='未定稿', updated_at=?
+                WHERE id = ?
+            ''', (new_version_number, now, script_id))
+        
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def rollback_to_version(script_id, to_version_number, rollback_reason, operated_by='系统'):
+    target_version = get_version_by_script_id_and_version(script_id, to_version_number)
+    if not target_version:
+        return False, '目标版本不存在'
+    
+    script = get_host_script_by_id(script_id)
+    if not script:
+        return False, '主持词不存在'
+    
+    from_version = script[6]
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    try:
+        execute_non_query('''
+            INSERT INTO rollback_record (script_id, from_version, to_version, rollback_reason, operated_by, operated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (script_id, from_version, to_version_number, rollback_reason, operated_by, now))
+        
+        execute_non_query('''
+            UPDATE host_script SET current_version=?, script_content=?, updated_at=?
+            WHERE id = ?
+        ''', (to_version_number, target_version[4], now, script_id))
+        
+        save_version_history(script_id, to_version_number, '回滚恢复', target_version[4], script[8])
+        
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def get_rollback_records_by_script_id(script_id):
+    return execute_query('''
+        SELECT id, script_id, from_version, to_version, rollback_reason, operated_by, operated_at
+        FROM rollback_record WHERE script_id = ? ORDER BY operated_at DESC
+    ''', (script_id,))
